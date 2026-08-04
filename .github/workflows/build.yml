@@ -25,19 +25,18 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Cache cargo
+      - name: Cache cargo registry
         uses: actions/cache@v4
         continue-on-error: true
         with:
           path: |
-            pumpkin/target/
             ~/.cargo/registry/
             ~/.cargo/git/
-          key: pumpkin-rpg-${{ hashFiles('pumpkin/Cargo.lock') }}
-          restore-keys: pumpkin-rpg-
+          key: cargo-reg-${{ runner.os }}
 
       - name: Clone Pumpkin-MC
         run: |
+          rm -rf pumpkin
           git clone --depth 1 https://github.com/Pumpkin-MC/Pumpkin.git pumpkin
           echo "Pumpkin commit: $(cd pumpkin && git rev-parse --short HEAD)"
           ls pumpkin/Cargo.toml
