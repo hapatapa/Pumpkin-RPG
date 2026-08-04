@@ -1,0 +1,23 @@
+[package]
+name = "pumpkin-rpg-plugin"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+description = "RPG combat system, skill system, and custom camera angles for Pumpkin-MC"
+authors = ["RPG Plugin"]
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+pumpkin = { path = "../pumpkin" }
+pumpkin-api-macros = { path = "../pumpkin-api-macros" }
+pumpkin-protocol = { path = "../pumpkin-protocol", features = ["default"] }
+pumpkin-util = { path = "../pumpkin-util" }
+pumpkin-macros = { path = "../pumpkin-macros" }
+tokio = { workspace = true, features = ["sync", "macros", "rt-multi-thread", "time"] }
+dashmap.workspace = true
+uuid.workspace = true
+
+[lints]
+workspace = true
