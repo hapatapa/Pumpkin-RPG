@@ -37,9 +37,10 @@ jobs:
       - name: Clone Pumpkin-MC
         run: |
           rm -rf pumpkin
-          git clone --depth 1 https://github.com/Pumpkin-MC/Pumpkin.git pumpkin
+          git clone --depth 1 --recurse-submodules --shallow-submodules https://github.com/Pumpkin-MC/Pumpkin.git pumpkin
           echo "Pumpkin commit: $(cd pumpkin && git rev-parse --short HEAD)"
           ls pumpkin/Cargo.toml
+          ls pumpkin/pumpkin-plugin-wit/
 
       - name: Apply patches
         run: bash scripts/apply-patches.sh

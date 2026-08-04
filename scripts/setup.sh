@@ -11,7 +11,7 @@ echo "=== Pumpkin-RPG Setup ==="
 # Clone Pumpkin-MC if not already present
 if [ ! -d "pumpkin" ]; then
     echo "[SETUP] Cloning Pumpkin-MC (branch: $BRANCH)..."
-    git clone --depth 1 --branch "$BRANCH" "$PUMPKIN_REPO" pumpkin
+    git clone --depth 1 --recurse-submodules --shallow-submodules --branch "$BRANCH" "$PUMPKIN_REPO" pumpkin
     echo "[SETUP] Clone successful"
 fi
 
