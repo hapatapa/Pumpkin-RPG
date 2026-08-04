@@ -15,17 +15,19 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
+    env:
+      CARGO_INCREMENTAL: 0
+      RUST_BACKTRACE: 1
     steps:
       - name: Checkout repo
         uses: actions/checkout@v4
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt, clippy
 
       - name: Cache cargo
         uses: actions/cache@v4
+        continue-on-error: true
         with:
           path: |
             pumpkin/target/
@@ -34,14 +36,28 @@ jobs:
           key: pumpkin-rpg-${{ hashFiles('pumpkin/Cargo.lock') }}
           restore-keys: pumpkin-rpg-
 
-      - name: Run setup
-        run: bash scripts/setup.sh
+      - name: Clone Pumpkin-MC
+        run: |
+          git clone --depth 1 https://github.com/Pumpkin-MC/Pumpkin.git pumpkin
+          echo "Pumpkin commit: $(cd pumpkin && git rev-parse --short HEAD)"
+          ls pumpkin/Cargo.toml
+
+      - name: Apply patches
+        run: bash scripts/apply-patches.sh
+
+      - name: Add plugin to workspace
+        run: |
+          cp -r plugin pumpkin/pumpkin-rpg-plugin
+          sed -i '/^members = \[/a \  "pumpkin-rpg-plugin",' pumpkin/Cargo.toml
+          echo "Workspace members:"
+          grep -A15 'members' pumpkin/Cargo.toml | head -16
 
       - name: Build
         working-directory: pumpkin
-        run: cargo build --release -p pumpkin -p pumpkin-rpg-plugin 2>&1 | tee build.log
+        run: cargo build --release -p pumpkin -p pumpkin-rpg-plugin 2>&1 | tee ../build.log
 
       - name: Upload server binary
+        if: success()
         uses: actions/upload-artifact@v4
         with:
           name: pumpkin-server
@@ -49,6 +65,7 @@ jobs:
           retention-days: 30
 
       - name: Upload plugin
+        if: success()
         uses: actions/upload-artifact@v4
         with:
           name: pumpkin-rpg-plugin
@@ -60,5 +77,5 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: build-log
-          path: pumpkin/build.log
+          path: build.log
           retention-days: 7
