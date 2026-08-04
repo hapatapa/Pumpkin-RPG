@@ -11,7 +11,7 @@ use pumpkin::plugin::api::events::server::server_tick_start::ServerTickStartEven
 use pumpkin::plugin::api::{EventPriority, Payload};
 use pumpkin::plugin::EventHandler;
 use pumpkin_protocol::java::client::play::{CSetCamera, CRemoveEntities};
-use pumpkin_protocol::VarInt;
+use pumpkin_protocol::codec::var_int::VarInt;
 use pumpkin_util::text::TextComponent;
 
 use crate::camera::{self, CameraMode};
@@ -118,7 +118,7 @@ impl EventHandler<ServerTickStartEvent> for TickHandler {
                     let player_id = player.entity_id();
                     let cam_mgr = &camera::CAMERA_MANAGER;
 
-                    if let Some(cam_state) = cam_mgr.get_camera(player_id) {
+                    if let Some(cam_state) = cam_mgr.get_camera(player_id).cloned() {
                         if matches!(cam_state.mode, CameraMode::FirstPerson) {
                             continue;
                         }
@@ -307,7 +307,7 @@ impl CommandExecutor for CameraSetExecutor {
                 }
                 player
                     .client
-                    .send_packet_now(&CSetCamera::new(entity_id.into()))
+                    .send_packet_now(&CSetCamera::new(VarInt(entity_id)))
                     .await;
                 player.camera_target_id.store(None);
                 sender
@@ -385,7 +385,7 @@ impl CommandExecutor for CameraResetExecutor {
             player.camera_target_id.store(None);
             player
                 .client
-                .send_packet_now(&CSetCamera::new(entity_id.into()))
+                .send_packet_now(&CSetCamera::new(VarInt(entity_id)))
                 .await;
 
             sender
@@ -510,8 +510,8 @@ impl CommandExecutor for RpgClassInfoExecutor {
 
             let mut msg = format!(
                 "\u{00a7}6=== RPG Info ===\u{00a7}r\n"
-                "Class: \u{00a7}a{}\u{00a7}r\n"
-                "RPG: {}\n"
+                "Class: \u{00a7}a{}\u{00a7}r\n",
+                "RPG: {}\n",
                 "Combo: \u{00a7}e{}x\u{00a7}r ({:.1}x damage)\n",
                 cls_name,
                 if rpg_enabled {

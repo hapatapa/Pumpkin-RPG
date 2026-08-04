@@ -4,7 +4,8 @@ use std::sync::{LazyLock, Mutex};
 use uuid;
 use pumpkin_util::math::vector3::Vector3;
 use pumpkin_protocol::java::client::play::{CSpawnEntity, CTeleportEntity};
-use pumpkin_protocol::{VarInt, PositionFlag};
+use pumpkin_protocol::codec::var_int::VarInt;
+use pumpkin_protocol::PositionFlag;
 
 /// Camera modes with position offsets relative to the player.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]

@@ -39,7 +39,7 @@ impl Plugin for RpgPlugin {
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub static METADATA: LazyLock<pumpkin::plugin::PluginMetadata> = LazyLock::new(|| {
     pumpkin::plugin::PluginMetadata {
         name: env!("CARGO_PKG_NAME").to_string(),
@@ -54,10 +54,10 @@ pub static METADATA: LazyLock<pumpkin::plugin::PluginMetadata> = LazyLock::new(|
     }
 });
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub static PUMPKIN_API_VERSION: u32 = pumpkin::plugin::PLUGIN_API_VERSION;
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub fn plugin() -> Box<dyn Plugin> {
     Box::new(RpgPlugin::new())
 }

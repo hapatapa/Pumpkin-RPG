@@ -28,12 +28,12 @@ impl RpgDamageType {
 
     pub fn color_code(&self) -> &str {
         match self {
-            Self::Physical => "\u00a77", // gray
-            Self::Fire => "\u00a7c",     // red
-            Self::Magic => "\u00a75",    // purple
-            Self::Holy => "\u00a7e",     // yellow
-            Self::Dark => "\u00a78",     // dark gray
-            Self::Ice => "\u00a7b",      // aqua
+            Self::Physical => "\u{00a7}7", // gray
+            Self::Fire => "\u{00a7}c",     // red
+            Self::Magic => "\u{00a7}5",    // purple
+            Self::Holy => "\u{00a7}e",     // yellow
+            Self::Dark => "\u{00a7}8",     // dark gray
+            Self::Ice => "\u{00a7}b",      // aqua
         }
     }
 

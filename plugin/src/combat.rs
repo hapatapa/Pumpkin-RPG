@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::sync::{LazyLock, Mutex, atomic::{AtomicBool, AtomicI32, AtomicU32, Ordering}};
 
-use skills::RpgDamageType;
+use crate::skills::RpgDamageType;
 use dashmap::DashMap;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -166,7 +166,7 @@ impl RpgCombatState {
     /// Returns combo multiplier: 1.0 + 0.1 * combo_count (max 2.0 at 10 hits)
     pub fn combo_multiplier(&self) -> f32 {
         let count = self.combo_count.load(Ordering::Relaxed);
-        1.0 + f32::from(count) * 0.1
+        1.0 + count as f32 * 0.1
     }
 
     /// Total damage modifier combining class affinity and combo.
