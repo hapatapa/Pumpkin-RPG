@@ -24,7 +24,7 @@ bash scripts/setup.sh
 echo ""
 echo "=== Building (this will take a while) ==="
 cd pumpkin
-cargo build --release --workspace 2>&1 | tee ../build.log
+cargo build --release -p pumpkin -p pumpkin-rpg-plugin 2>&1 | tee ../build.log
 
 if [ ${PIPESTATUS[0]} -eq 0 ]; then
     echo ""
