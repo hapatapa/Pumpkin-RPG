@@ -118,7 +118,7 @@ impl EventHandler<ServerTickStartEvent> for TickHandler {
                     let player_id = player.entity_id();
                     let cam_mgr = &camera::CAMERA_MANAGER;
 
-                    if let Some(cam_state) = cam_mgr.get_camera(player_id).cloned() {
+                    if let Some(cam_state) = cam_mgr.get_camera(player_id) {
                         if matches!(cam_state.mode, CameraMode::FirstPerson) {
                             continue;
                         }
@@ -510,8 +510,8 @@ impl CommandExecutor for RpgClassInfoExecutor {
 
             let mut msg = format!(
                 "\u{00a7}6=== RPG Info ===\u{00a7}r\n"
-                "Class: \u{00a7}a{}\u{00a7}r\n",
-                "RPG: {}\n",
+                "Class: \u{00a7}a{}\u{00a7}r\n"
+                "RPG: {}\n"
                 "Combo: \u{00a7}e{}x\u{00a7}r ({:.1}x damage)\n",
                 cls_name,
                 if rpg_enabled {

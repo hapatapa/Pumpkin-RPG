@@ -59,6 +59,17 @@ pub struct CameraState {
     pub fake_uuid: uuid::Uuid,
 }
 
+impl Clone for CameraState {
+    fn clone(&self) -> Self {
+        Self {
+            mode: self.mode,
+            fake_entity_id: self.fake_entity_id,
+            fake_uuid: self.fake_uuid,
+        }
+    }
+}
+impl Copy for CameraState {}
+
 pub struct CameraManager {
     cameras: Mutex<HashMap<i32, CameraState>>, // player entity_id -> CameraState
     next_fake_id: Mutex<i32>,
@@ -127,14 +138,16 @@ pub fn build_spawn_packet(camera_state: &CameraState, pos: Vector3<f64>, yaw: f3
 
 /// Build the CTeleportEntity packet to move the camera entity.
 pub fn build_teleport_packet(camera_state: &CameraState, pos: Vector3<f64>, yaw: f32, pitch: f32) -> CTeleportEntity<'static> {
-    let relatives: [PositionFlag; 0] = [];
+    // Use a const slice so it has 'static lifetime; we cannot borrow a
+    // local variable here because CTeleportEntity<'static> outlives this fn.
+    const EMPTY_RELATIVES: &[PositionFlag] = &[];
     CTeleportEntity::new(
         VarInt(camera_state.fake_entity_id),
         pos,
         Vector3::new(0.0, 0.0, 0.0),
         yaw,
         pitch,
-        &relatives,
+        EMPTY_RELATIVES,
         false,
     )
 }
