@@ -178,10 +178,12 @@ impl CameraManager {
         let stand_entity = stand.get_entity();
         stand_entity.set_invisible(true).await;
         stand_entity.set_has_no_gravity(true);
-        stand_entity.set_silent(true).await;
+        stand_entity.set_silent(true);
 
-        // Spawn the entity in the world
-        world.spawn_entity(stand.clone() as Arc<dyn EntityBase>).await;
+        // Spawn the entity in the world. Use Arc::clone (not stand.clone())
+        // because ArmorStandEntity itself doesn't impl Clone — but the Arc
+        // wrapping it does.
+        world.spawn_entity(Arc::clone(&stand) as Arc<dyn EntityBase>).await;
 
         // 4. Switch the player's view to the fake entity
         player.client.enqueue_packet(&CSetCamera::new(VarInt(fake_id))).await;
@@ -320,9 +322,12 @@ impl CameraManager {
                     eye_pos.y + normalized.y * max_dist,
                     eye_pos.z + normalized.z * max_dist,
                 );
-                // Try raycast; if it hits a block, pull camera in.
-                // Use a simple predicate that treats any non-air block as a hit.
-                let hit = world.raycast(eye_pos, end_pos, |_, _| async { true }).await;
+                // Camera collision: raycast from eye to desired camera position.
+                // If we hit a block, pull camera in to just before the hit point.
+                // The raycast API requires an async predicate; we use an async
+                // closure that always returns true (treat any block as a hit).
+                // Use a boxed future to satisfy the AsyncFn bound.
+                let hit = world.raycast(eye_pos, end_pos, |_bp, _w| Box::pin(async { true })).await;
                 if let Some((block_pos, _)) = hit {
                     // Move camera to 0.3 blocks before the hit block center
                     let bx = block_pos.0.x as f64 + 0.5;

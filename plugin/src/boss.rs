@@ -100,6 +100,7 @@ impl BossPhase {
 }
 
 /// Tracked state for an active boss fight.
+#[derive(Clone)]
 pub struct BossState {
     pub boss_type: BossType,
     pub entity_id: i32,                    // vanilla entity id of the boss mob
@@ -372,15 +373,19 @@ pub async fn tick_all_bosses(server: &Arc<Server>) {
             (BossType::SkeletonKing, _) => {
                 // Summon 2 skeleton minions + AoE particle burst
                 use pumpkin::entity::mob::skeleton::skeleton::SkeletonEntity;
+                use pumpkin::entity::EntityBase;
                 for _ in 0..2 {
                     let offset_x = (rand::random::<f64>() - 0.5) * 4.0;
                     let offset_z = (rand::random::<f64>() - 0.5) * 4.0;
                     let minion_pos = Vector3::new(pos.x + offset_x, pos.y, pos.z + offset_z);
                     let minion_entity = Entity::new(world.clone(), minion_pos, &EntityType::SKELETON);
                     let minion = SkeletonEntity::new(minion_entity);
-                    if let Some(living) = minion.get_living_entity() {
-                        living.set_max_health(20.0).await;
-                        living.set_health(20.0);
+                    // Configure HP before spawning (borrow minion, then release)
+                    {
+                        if let Some(living) = minion.get_living_entity() {
+                            living.set_max_health(20.0).await;
+                            living.set_health(20.0);
+                        }
                     }
                     world.spawn_entity(minion as Arc<dyn EntityBase>).await;
                 }

@@ -20,7 +20,6 @@
 
 use rand::Rng;
 use rand::seq::SliceRandom;
-
 use pumpkin_data::item::Item;
 use pumpkin_data::item_stack::ItemStack;
 use pumpkin_data::Enchantment;

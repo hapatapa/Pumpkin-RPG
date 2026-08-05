@@ -69,7 +69,7 @@ pub async fn show_levelup(player: &Arc<Player>, new_level: i32, class: RpgClass)
     use pumpkin_data::sound::{Sound, SoundCategory};
     use pumpkin_util::math::vector3::Vector3;
     let pos = player.position();
-    player.world.play_sound(Sound::EntityPlayerLevelup, SoundCategory::Players, &pos);
+    player.world().play_sound(Sound::EntityPlayerLevelup, SoundCategory::Players, &pos);
 }
 
 /// Show a class-change confirmation.
