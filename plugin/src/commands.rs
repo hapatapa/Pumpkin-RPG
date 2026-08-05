@@ -69,7 +69,7 @@ impl CommandExecutor for ClassSetExecutor {
 
             // Announce in chat
             let msg = format!(
-                "\u{00a7}aClass changed: {} -> {}{}\u{00a7}r",
+                "\u{00a7}aClass changed: {}{} -> {}{}\u{00a7}r",
                 old_class.color_code(), old_class.display_name(),
                 class.color_code(), class.display_name()
             );

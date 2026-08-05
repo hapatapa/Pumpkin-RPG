@@ -136,7 +136,7 @@ impl EventHandler<EntityDamageEvent> for DamageModHandler {
                 s.shadowstep_until_tick.load(std::sync::atomic::Ordering::Relaxed)
             });
             if tick < shadowstep_until {
-                crit_mult = crit_mult.max(2.5);
+                crit_mult = crit_mult.max(2.5_f32);
             }
 
             // Check target status effects
@@ -188,7 +188,7 @@ impl EventHandler<EntityDamageEvent> for DamageModHandler {
 
 struct EntityDeathHandler;
 impl EventHandler<EntityDeathEvent> for EntityDeathHandler {
-    fn handle<'a>(&'a self, server: &'a Arc<Server>, event: &'a mut EntityDeathEvent) -> pumpkin::plugin::BoxFuture<'a, ()> {
+    fn handle_blocking<'a>(&'a self, server: &'a Arc<Server>, event: &'a mut EntityDeathEvent) -> pumpkin::plugin::BoxFuture<'a, ()> {
         Box::pin(async move {
             let target_eid = event.entity_id;
             let tick = current_tick();
@@ -200,9 +200,9 @@ impl EventHandler<EntityDeathEvent> for EntityDeathHandler {
 
             for world in server.worlds.load().iter() {
                 for entity in world.entities.load().iter() {
-                    if entity.entity_id() == target_eid {
-                        entity_pos = Some(entity.position());
-                        entity_type_name = Some(entity.entity_type().name.to_string());
+                    if entity.get_entity().entity_id == target_eid {
+                        entity_pos = Some(entity.get_entity().pos.load());
+                        entity_type_name = Some(entity.get_entity().entity_type.resource_name.to_string());
                         world_ref = Some(world.clone());
                         break;
                     }
@@ -290,14 +290,15 @@ impl EventHandler<ServerTickStartEvent> for TickHandler {
                     // Find the entity and apply damage
                     for world in server.worlds.load().iter() {
                         for entity in world.entities.load().iter() {
-                            if entity.entity_id() == eid {
+                            if entity.get_entity().entity_id == eid {
                                 let dmg = damage::with_mob_status_mut(eid, |s| {
                                     if s.is_ignited(tick) { s.ignited_damage_per_tick } else { 0.0 }
                                 });
                                 if dmg > 0.0 {
                                     // Apply fire damage to the entity
                                     if let Some(living) = entity.get_living_entity() {
-                                        living.health.fetch_sub(dmg).await;
+                                        let cur = living.health.load();
+                                        living.set_health(cur - dmg);
                                     }
                                 }
                                 break;

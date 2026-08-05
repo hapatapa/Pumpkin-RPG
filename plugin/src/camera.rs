@@ -141,7 +141,7 @@ impl CameraManager {
     /// packet to switch the player's view.
     pub async fn set_mode(&self, player: &Arc<pumpkin::entity::player::Player>, mode: CameraMode) {
         let player_eid = player.entity_id();
-        let world = player.world.clone();
+        let world = player.world().clone();
 
         // 1. Remove old camera entity if any
         if let Some(old) = self.remove_camera(player_eid) {
@@ -152,31 +152,35 @@ impl CameraManager {
         // 2. FirstPerson = no fake entity, just reset camera to player
         if mode == CameraMode::FirstPerson {
             player.client.enqueue_packet(&CSetCamera::new(VarInt(player_eid))).await;
-            // Clear camera_target_id if present
-            // (player.camera_target_id is an AtomicCell<Option<i32>>)
             return;
         }
 
-        // 3. Spawn invisible marker armor stand at player's position
+        // 3. Spawn invisible marker armor stand at player's position.
+        //    ArmorStandEntity::new takes Entity and returns Arc<Self>, which
+        //    we upcast to Arc<dyn EntityBase> for spawn_entity.
         let player_pos = player.position();
         let fake_uuid = Uuid::new_v4();
         let entity = Entity::new(world.clone(), player_pos, &EntityType::ARMOR_STAND);
-        let fake_id = entity.entity_id();
+        let fake_id = entity.entity_id;
 
-        // Configure: invisible, marker (no hitbox), small, no base plate
-        let stand = Arc::new(ArmorStandEntity::new(entity));
+        // Configure: invisible, marker (no hitbox), small, no base plate.
+        // ArmorStandEntity::new consumes the Entity; we set properties via
+        // the returned Arc<Self> (which derefs to its inner mob/living/entity chain).
+        use pumpkin::entity::EntityBase;
+        let stand = ArmorStandEntity::new(entity);
         stand.set_marker(true);
         stand.set_small(true);
         stand.set_hide_base_plate(true);
         stand.set_show_arms(false);
 
-        // Make invisible via the Entity API (broadcasts metadata)
-        stand.entity.set_invisible(true).await;
-        stand.entity.set_has_no_gravity(true);
-        stand.entity.set_silent(true).await;
+        // Make invisible via the Entity API (broadcasts metadata).
+        // ArmorStandEntity impls Mob -> EntityBase, so get_entity() gives &Entity.
+        let stand_entity = stand.get_entity();
+        stand_entity.set_invisible(true).await;
+        stand_entity.set_has_no_gravity(true);
+        stand_entity.set_silent(true).await;
 
-        // Spawn the entity in the world (broadcasts CSpawnEntity to all players
-        // in range, including the player themselves)
+        // Spawn the entity in the world
         world.spawn_entity(stand.clone() as Arc<dyn EntityBase>).await;
 
         // 4. Switch the player's view to the fake entity
@@ -212,10 +216,8 @@ impl CameraManager {
     /// Per-tick update: move each player's camera entity to follow them.
     /// Called from ServerTickStartEvent handler.
     pub async fn tick_all(&self, server: &Arc<Server>) {
-        let snapshots: Vec<(i32, CameraMode, Vector3<f64>, f32, f32)> = {
+        let snapshots: Vec<(i32, CameraMode)> = {
             let cams = self.cameras.lock().unwrap();
-            // We need player position/yaw/pitch for each camera, which we can
-            // only get by looking up the player. Collect entity_ids first.
             cams.iter().map(|(eid, state)| (*eid, state.mode)).collect()
         };
 
@@ -298,9 +300,8 @@ impl CameraManager {
         );
 
         // Camera collision: raycast from player eye to desired camera position.
-        // If we hit a block, move the camera to just before the hit point.
         let eye_pos = Vector3::new(player_pos.x, player_pos.y + 1.62, player_pos.z);
-        let world = player.world.clone();
+        let world = player.world().clone();
         let max_dist = mode.max_distance();
 
         let actual_pos = if max_dist > 0.0 {
@@ -359,28 +360,29 @@ impl CameraManager {
     ) {
         let player_eid = player.entity_id();
         let state_opt = self.cameras.lock().unwrap().get(&player_eid).copied();
-        let Some(mut state) = state_opt else { return; };
+        let Some(state) = state_opt else { return; };
 
         // Interpolate: move 30% of the way to the target each tick.
         // This gives smooth motion at 20 TPS without teleporting.
-        let interp_factor = 0.3;
+        let interp_f64: f64 = 0.3;
+        let interp_f32: f32 = 0.3;
         let new_pos = Vector3::new(
-            state.last_sent_pos.x + (target_pos.x - state.last_sent_pos.x) * interp_factor,
-            state.last_sent_pos.y + (target_pos.y - state.last_sent_pos.y) * interp_factor,
-            state.last_sent_pos.z + (target_pos.z - state.last_sent_pos.z) * interp_factor,
+            state.last_sent_pos.x + (target_pos.x - state.last_sent_pos.x) * interp_f64,
+            state.last_sent_pos.y + (target_pos.y - state.last_sent_pos.y) * interp_f64,
+            state.last_sent_pos.z + (target_pos.z - state.last_sent_pos.z) * interp_f64,
         );
 
         // Yaw interpolation: handle wraparound (yaw can jump from 359 to 0)
         let yaw_diff = ((target_yaw - state.last_sent_yaw + 180.0).rem_euclid(360.0)) - 180.0;
-        let new_yaw = state.last_sent_yaw + yaw_diff as f64 * interp_factor as f64;
-        let new_pitch = state.last_sent_pitch + (target_pitch - state.last_sent_pitch) * interp_factor;
+        let new_yaw = state.last_sent_yaw + yaw_diff * interp_f32;
+        let new_pitch = state.last_sent_pitch + (target_pitch - state.last_sent_pitch) * interp_f32;
 
         // Update state
         {
             let mut cams = self.cameras.lock().unwrap();
             if let Some(s) = cams.get_mut(&player_eid) {
                 s.last_sent_pos = new_pos;
-                s.last_sent_yaw = new_yaw as f32;
+                s.last_sent_yaw = new_yaw;
                 s.last_sent_pitch = new_pitch;
             }
         }
@@ -393,7 +395,7 @@ impl CameraManager {
             VarInt(state.fake_entity_id),
             new_pos,
             Vector3::new(0.0, 0.0, 0.0),
-            new_yaw as f32,
+            new_yaw,
             new_pitch,
             EMPTY_RELATIVES,
             false,

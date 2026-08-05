@@ -130,33 +130,33 @@ pub async fn spawn_boss(
     pos: Vector3<f64>,
     world: &Arc<pumpkin::world::World>,
 ) -> Option<i32> {
-    // 1. Create the vanilla entity
-    let entity_uuid = uuid::Uuid::new_v4();
-    let entity = Entity::new(world.clone(), pos, boss_type.entity_type());
-    let entity_id = entity.entity_id();
-
-    // 2. Wrap in the appropriate mob type. For v1 we use the base Entity and
-    //    set HP via the living entity's set_max_health. The actual mob AI is
-    //    handled by Pumpkin's vanilla entity system.
+    // 1. Wrap in the appropriate mob type. The mob constructor takes an
+    //    Entity and returns Arc<Self>. We upcast to Arc<dyn EntityBase>.
     use pumpkin::entity::EntityBase;
     let mob: Arc<dyn EntityBase> = match boss_type {
         BossType::SkeletonKing => {
-            use pumpkin::entity::hostile::skeleton::SkeletonEntity;
-            Arc::new(SkeletonEntity::new(entity))
+            use pumpkin::entity::mob::skeleton::skeleton::SkeletonEntity;
+            SkeletonEntity::new(Entity::new(world.clone(), pos, boss_type.entity_type()))
+                as Arc<dyn EntityBase>
         }
         BossType::CorruptedGolem => {
             use pumpkin::entity::passive::iron_golem::IronGolemEntity;
-            Arc::new(IronGolemEntity::new(entity))
+            IronGolemEntity::new(Entity::new(world.clone(), pos, boss_type.entity_type()))
+                as Arc<dyn EntityBase>
         }
         BossType::WitherQueen => {
             // Wither requires a more complex setup (flying entity, projectile AI).
-            // For v1 we fall back to a Skeleton with high HP if Wither spawning fails.
-            use pumpkin::entity::hostile::skeleton::SkeletonEntity;
-            Arc::new(SkeletonEntity::new(entity))
+            // For v1 we fall back to a Skeleton with high HP.
+            use pumpkin::entity::mob::skeleton::skeleton::SkeletonEntity;
+            SkeletonEntity::new(Entity::new(world.clone(), pos, boss_type.entity_type()))
+                as Arc<dyn EntityBase>
         }
     };
 
-    // 3. Configure HP
+    // 2. Get entity_id from the underlying Entity (it's a public field, not a method)
+    let entity_id = mob.get_entity().entity_id;
+
+    // 3. Configure HP + name + glowing
     if let Some(living) = mob.get_living_entity() {
         living.set_max_health(boss_type.max_hp()).await;
         living.set_health(boss_type.max_hp());
@@ -175,6 +175,7 @@ pub async fn spawn_boss(
     bossbar.division = BossbarDivisions::Notches20;
     bossbar.flags = BossbarFlags::DARKEN_SKY | BossbarFlags::CREATE_FOG;
     let bossbar_uuid = bossbar.uuid;
+    let entity_uuid = uuid::Uuid::new_v4(); // tracked but not currently used for lookup
 
     // 6. Find players within 32 blocks and show them the bar
     let nearby_players: Vec<Arc<pumpkin::entity::player::Player>> = world
@@ -281,7 +282,7 @@ pub async fn remove_boss(server: &Arc<Server>, entity_id: i32) {
         let pos = pumpkin_util::math::vector3::Vector3::new(0.0, 100.0, 0.0);
         crate::loot::drop_loot(
             &world, pos,
-            &state.boss_type.entity_type().name,
+            state.boss_type.entity_type().resource_name,
             20, // assume level 20 for boss loot
             allow_mythic,
         ).await;
@@ -289,7 +290,7 @@ pub async fn remove_boss(server: &Arc<Server>, entity_id: i32) {
         for _ in 0..3 {
             crate::loot::drop_loot(
                 &world, pos,
-                &state.boss_type.entity_type().name,
+                state.boss_type.entity_type().resource_name,
                 20, allow_mythic,
             ).await;
         }
@@ -347,8 +348,8 @@ pub async fn tick_all_bosses(server: &Arc<Server>) {
         let mut world_ref: Option<Arc<pumpkin::world::World>> = None;
         for world in server.worlds.load().iter() {
             for entity in world.entities.load().iter() {
-                if entity.entity_id() == entity_id {
-                    boss_pos = Some(entity.position());
+                if entity.get_entity().entity_id == entity_id {
+                    boss_pos = Some(entity.get_entity().pos.load());
                     world_ref = Some(world.clone());
                     break;
                 }
@@ -370,19 +371,18 @@ pub async fn tick_all_bosses(server: &Arc<Server>) {
         match (boss_type, phase) {
             (BossType::SkeletonKing, _) => {
                 // Summon 2 skeleton minions + AoE particle burst
-                use pumpkin::entity::hostile::skeleton::SkeletonEntity;
+                use pumpkin::entity::mob::skeleton::skeleton::SkeletonEntity;
                 for _ in 0..2 {
                     let offset_x = (rand::random::<f64>() - 0.5) * 4.0;
                     let offset_z = (rand::random::<f64>() - 0.5) * 4.0;
                     let minion_pos = Vector3::new(pos.x + offset_x, pos.y, pos.z + offset_z);
-                    let minion_uuid = uuid::Uuid::new_v4();
                     let minion_entity = Entity::new(world.clone(), minion_pos, &EntityType::SKELETON);
-                    let minion = Arc::new(SkeletonEntity::new(minion_entity));
+                    let minion = SkeletonEntity::new(minion_entity);
                     if let Some(living) = minion.get_living_entity() {
                         living.set_max_health(20.0).await;
                         living.set_health(20.0);
                     }
-                    world.spawn_entity(minion).await;
+                    world.spawn_entity(minion as Arc<dyn EntityBase>).await;
                 }
                 // Particle burst
                 use pumpkin_data::particle::Particle;

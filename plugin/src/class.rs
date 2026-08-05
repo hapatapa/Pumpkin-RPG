@@ -15,8 +15,9 @@
 use crate::damage::RpgDamageType;
 
 /// The four playable classes. Pick via `/class <name>`.
-#[derive(Clone, Copy, PartialEq, Eq, Debug, Hash)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Hash, Default)]
 pub enum RpgClass {
+    #[default]
     Vanguard,
     Spellblade,
     Trickster,

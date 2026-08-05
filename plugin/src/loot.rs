@@ -74,7 +74,7 @@ impl Rarity {
     /// Roll a random rarity. Bias toward Common; Mythic only via `allow_mythic=true`.
     pub fn roll(allow_mythic: bool) -> Self {
         let mut rng = rand::thread_rng();
-        let roll: f32 = rng.gen();
+        let roll: f32 = rng.random();
         if allow_mythic && roll < 0.01 {
             Self::Mythic
         } else if roll < 0.05 {
@@ -159,8 +159,7 @@ pub async fn drop_loot(
 
     // Higher player level → chance for an extra drop
     let extra_drop_chance = (player_level as f32 * 0.02).min(0.5);
-    let num_drops = if rng.gen::<f32>() < extra_drop_chance { 2 } else { 1 };
-
+    let num_drops = if rng.random::<f32>() < extra_drop_chance { 2 } else { 1 };
     for _ in 0..num_drops {
         // Weighted random selection
         let total_weight: u32 = table.iter().map(|e| e.weight).sum();
@@ -218,7 +217,7 @@ fn roll_rarity_biased_by_level(level: i32, allow_mythic: bool) -> Rarity {
     let base = Rarity::roll(allow_mythic);
     let mut rng = rand::thread_rng();
     let bump_chance = (level as f32 * 0.01).min(0.5);
-    if rng.gen::<f32>() < bump_chance {
+    if rng.random::<f32>() < bump_chance {
         match base {
             Rarity::Common    => Rarity::Rare,
             Rarity::Rare      => Rarity::Epic,
@@ -233,19 +232,21 @@ fn roll_rarity_biased_by_level(level: i32, allow_mythic: bool) -> Rarity {
 
 /// Human-readable name for an item, used in the loot display name.
 fn item_display_name(item: &Item) -> String {
-    // Item::name returns the registry name (e.g. "iron_sword"). We prettify it.
-    let raw = item.name;
-    raw.replace('_', " ")
-       .split_whitespace()
-       .map(|w| {
-           let mut chars = w.chars();
-           match chars.next() {
-               Some(c) => c.to_uppercase().collect::<String>() + chars.as_str(),
-               None => String::new(),
-           }
-       })
-       .collect::<Vec<_>>()
-       .join(" ")
+    // Item::registry_key is the registry name (e.g. "minecraft:iron_sword").
+    // Strip the namespace and prettify the rest.
+    let raw = item.registry_key;
+    let name_part = raw.rsplit_once(':').map_or(raw, |(_, n)| n);
+    name_part.replace('_', " ")
+        .split_whitespace()
+        .map(|w| {
+            let mut chars = w.chars();
+            match chars.next() {
+                Some(c) => c.to_uppercase().collect::<String>() + chars.as_str(),
+                None => String::new(),
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 /// Max enchantment level by rarity (better rarity = higher enchants).
