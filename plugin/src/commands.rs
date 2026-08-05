@@ -509,10 +509,7 @@ impl CommandExecutor for RpgClassInfoExecutor {
                 });
 
             let mut msg = format!(
-                "\u{00a7}6=== RPG Info ===\u{00a7}r\n"
-                "Class: \u{00a7}a{}\u{00a7}r\n"
-                "RPG: {}\n"
-                "Combo: \u{00a7}e{}x\u{00a7}r ({:.1}x damage)\n",
+                "\u{00a7}6=== RPG Info ===\u{00a7}r\nClass: \u{00a7}a{}\u{00a7}r\nRPG: {}\nCombo: \u{00a7}e{}x\u{00a7}r ({:.1}x damage)\n",
                 cls_name,
                 if rpg_enabled {
                     "\u{00a7}aON\u{00a7}r"
