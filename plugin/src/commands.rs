@@ -370,7 +370,7 @@ impl CommandExecutor for SummonBossExecutor {
 
             // Spawn at sender's position (or world spawn if console)
             let (pos, world) = if let Some(player) = sender.as_player() {
-                (player.position(), player.world.clone())
+                (player.position(), player.world().clone())
             } else {
                 let w = server.worlds.load().first().cloned();
                 let Some(w) = w else {

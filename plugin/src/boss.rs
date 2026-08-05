@@ -70,7 +70,7 @@ impl BossType {
         match self {
             Self::SkeletonKing => BossbarColor::Purple,
             Self::CorruptedGolem => BossbarColor::Red,
-            Self::WitherQueen => BossbarColor::Black,
+            Self::WitherQueen => BossbarColor::Purple, // Black not available in this enum
         }
     }
 }
@@ -126,7 +126,7 @@ pub static BOSSES: LazyLock<Mutex<HashMap<i32, BossState>>> = LazyLock::new(|| M
 /// This is async because spawning involves world I/O. The boss bar is sent
 /// only to players within 32 blocks of the spawn position.
 pub async fn spawn_boss(
-    server: &Arc<Server>,
+    server: &Server,
     boss_type: BossType,
     pos: Vector3<f64>,
     world: &Arc<pumpkin::world::World>,
@@ -221,7 +221,7 @@ pub async fn spawn_boss(
 
 /// Update a boss's HP bar based on its current HP. Called from the entity
 /// damage handler when a boss takes damage.
-pub async fn update_boss_hp(server: &Arc<Server>, entity_id: i32, current_hp: f32) {
+pub async fn update_boss_hp(server: &Server, entity_id: i32, current_hp: f32) {
     let state = {
         let map = BOSSES.lock().unwrap();
         map.get(&entity_id).cloned()
@@ -262,7 +262,7 @@ pub async fn update_boss_hp(server: &Arc<Server>, entity_id: i32, current_hp: f3
 }
 
 /// Remove a boss from tracking (on death or unload).
-pub async fn remove_boss(server: &Arc<Server>, entity_id: i32) {
+pub async fn remove_boss(server: &Server, entity_id: i32) {
     let state = BOSSES.lock().unwrap().remove(&entity_id);
     let Some(state) = state else { return; };
 
@@ -299,7 +299,7 @@ pub async fn remove_boss(server: &Arc<Server>, entity_id: i32) {
 }
 
 /// Clean up all active boss fights (called on plugin unload).
-pub async fn cleanup_all_bosses(server: &Arc<Server>) {
+pub async fn cleanup_all_bosses(server: &Server) {
     let entity_ids: Vec<i32> = BOSSES.lock().unwrap().keys().copied().collect();
     for eid in entity_ids {
         remove_boss(server, eid).await;
@@ -326,7 +326,7 @@ where
 // Called from the tick handler. Each boss performs special attacks on a
 // cooldown that depends on its phase.
 
-pub async fn tick_all_bosses(server: &Arc<Server>) {
+pub async fn tick_all_bosses(server: &Server) {
     let tick = current_tick();
     let boss_snapshots: Vec<(i32, BossType, BossPhase, u32, u32, uuid::Uuid, Vec<uuid::Uuid>)> = {
         let map = BOSSES.lock().unwrap();

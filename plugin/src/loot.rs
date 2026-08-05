@@ -72,8 +72,7 @@ impl Rarity {
 
     /// Roll a random rarity. Bias toward Common; Mythic only via `allow_mythic=true`.
     pub fn roll(allow_mythic: bool) -> Self {
-        let mut rng = rand::thread_rng();
-        let roll: f32 = rng.random();
+        let roll: f32 = rand::random();
         if allow_mythic && roll < 0.01 {
             Self::Mythic
         } else if roll < 0.05 {
@@ -158,7 +157,7 @@ pub async fn drop_loot(
 
     // Higher player level → chance for an extra drop
     let extra_drop_chance = (player_level as f32 * 0.02).min(0.5);
-    let num_drops = if rng.random::<f32>() < extra_drop_chance { 2 } else { 1 };
+    let num_drops = if rand::random::<f32>() < extra_drop_chance { 2 } else { 1 };
     for _ in 0..num_drops {
         // Weighted random selection
         let total_weight: u32 = table.iter().map(|e| e.weight).sum();
@@ -214,9 +213,8 @@ pub async fn drop_loot(
 /// At level 50+: ~50% chance to bump up one tier.
 fn roll_rarity_biased_by_level(level: i32, allow_mythic: bool) -> Rarity {
     let base = Rarity::roll(allow_mythic);
-    let mut rng = rand::thread_rng();
     let bump_chance = (level as f32 * 0.01).min(0.5);
-    if rng.random::<f32>() < bump_chance {
+    if rand::random::<f32>() < bump_chance {
         match base {
             Rarity::Common    => Rarity::Rare,
             Rarity::Rare      => Rarity::Epic,

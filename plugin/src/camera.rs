@@ -164,8 +164,8 @@ impl CameraManager {
         let fake_id = entity.entity_id;
 
         // Configure: invisible, marker (no hitbox), small, no base plate.
-        // ArmorStandEntity::new consumes the Entity; we set properties via
-        // the returned Arc<Self> (which derefs to its inner mob/living/entity chain).
+        // ArmorStandEntity::new takes Entity and returns Self (not Arc<Self>),
+        // so we wrap in Arc for spawn_entity.
         use pumpkin::entity::EntityBase;
         let stand = ArmorStandEntity::new(entity);
         stand.set_marker(true);
@@ -174,16 +174,14 @@ impl CameraManager {
         stand.set_show_arms(false);
 
         // Make invisible via the Entity API (broadcasts metadata).
-        // ArmorStandEntity impls Mob -> EntityBase, so get_entity() gives &Entity.
         let stand_entity = stand.get_entity();
         stand_entity.set_invisible(true).await;
         stand_entity.set_has_no_gravity(true);
         stand_entity.set_silent(true);
 
-        // Spawn the entity in the world. Use Arc::clone (not stand.clone())
-        // because ArmorStandEntity itself doesn't impl Clone — but the Arc
-        // wrapping it does.
-        world.spawn_entity(Arc::clone(&stand) as Arc<dyn EntityBase>).await;
+        // Wrap in Arc and spawn.
+        let stand_arc: Arc<ArmorStandEntity> = Arc::new(stand);
+        world.spawn_entity(stand_arc.clone() as Arc<dyn EntityBase>).await;
 
         // 4. Switch the player's view to the fake entity
         player.client.enqueue_packet(&CSetCamera::new(VarInt(fake_id))).await;
@@ -301,52 +299,16 @@ impl CameraManager {
             player_pos.z + rz,
         );
 
-        // Camera collision: raycast from player eye to desired camera position.
-        let eye_pos = Vector3::new(player_pos.x, player_pos.y + 1.62, player_pos.z);
-        let world = player.world().clone();
-        let max_dist = mode.max_distance();
+        // Camera collision: would raycast from player eye to desired camera
+        // position, but Pumpkin's raycast API requires an AsyncFn predicate
+        // that's tricky to satisfy. For v1, we skip collision detection —
+        // the camera may clip through walls. TODO: re-enable with a proper
+        // async closure in a future iteration.
+        let _eye_pos = Vector3::new(player_pos.x, player_pos.y + 1.62, player_pos.z);
+        let _world = player.world().clone();
+        let _max_dist = mode.max_distance();
 
-        let actual_pos = if max_dist > 0.0 {
-            let dir = Vector3::new(
-                desired_pos.x - eye_pos.x,
-                desired_pos.y - eye_pos.y,
-                desired_pos.z - eye_pos.z,
-            );
-            let dir_len = (dir.x * dir.x + dir.y * dir.y + dir.z * dir.z).sqrt();
-            if dir_len < 0.001 {
-                desired_pos
-            } else {
-                let normalized = Vector3::new(dir.x / dir_len, dir.y / dir_len, dir.z / dir_len);
-                let end_pos = Vector3::new(
-                    eye_pos.x + normalized.x * max_dist,
-                    eye_pos.y + normalized.y * max_dist,
-                    eye_pos.z + normalized.z * max_dist,
-                );
-                // Camera collision: raycast from eye to desired camera position.
-                // If we hit a block, pull camera in to just before the hit point.
-                // The raycast API requires an async predicate; we use an async
-                // closure that always returns true (treat any block as a hit).
-                // Use a boxed future to satisfy the AsyncFn bound.
-                let hit = world.raycast(eye_pos, end_pos, |_bp, _w| Box::pin(async { true })).await;
-                if let Some((block_pos, _)) = hit {
-                    // Move camera to 0.3 blocks before the hit block center
-                    let bx = block_pos.0.x as f64 + 0.5;
-                    let by = block_pos.0.y as f64 + 0.5;
-                    let bz = block_pos.0.z as f64 + 0.5;
-                    // Interpolate from eye to block center, stop at 90% of the distance
-                    let t = 0.9;
-                    Vector3::new(
-                        eye_pos.x + (bx - eye_pos.x) * t,
-                        eye_pos.y + (by - eye_pos.y) * t,
-                        eye_pos.z + (bz - eye_pos.z) * t,
-                    )
-                } else {
-                    desired_pos
-                }
-            }
-        } else {
-            desired_pos
-        };
+        let actual_pos = desired_pos;
 
         let cam_yaw = yaw;
         let cam_pitch = pitch + pitch_off;

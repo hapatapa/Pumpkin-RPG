@@ -41,7 +41,7 @@ impl EventHandler<PlayerInteractEntityEvent> for AttackTrackHandler {
             let player = &event.player;
             let player_uuid = player.gameprofile.id;
             let attacker_eid = player.entity_id();
-            let target_eid = event.target.entity_id();
+            let target_eid = event.target.get_entity().entity_id;
             let tick = current_tick();
 
             damage::record_attack(target_eid, player_uuid, attacker_eid, tick);
@@ -79,9 +79,9 @@ impl EventHandler<EntityDamageEvent> for DamageModHandler {
             let combo_mult = damage::combo_multiplier(combo + 1);
 
             // Skill multiplier + effect application
-            let mut skill_mult = 1.0;
-            let mut crit_mult = 1.0;
-            let mut elemental_mult = 1.0;
+            let mut skill_mult: f32 = 1.0;
+            let mut crit_mult: f32 = 1.0;
+            let mut elemental_mult: f32 = 1.0;
             let mut damage_type = class.basic_damage_type();
 
             if pending_skill_id >= 0 {
