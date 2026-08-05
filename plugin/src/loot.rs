@@ -153,57 +153,70 @@ pub async fn drop_loot(
     allow_mythic: bool,
 ) {
     let table = loot_table_for_mob(mob_type);
-    let mut rng = rand::thread_rng();
 
     // Higher player level → chance for an extra drop
     let extra_drop_chance = (player_level as f32 * 0.02).min(0.5);
     let num_drops = if rand::random::<f32>() < extra_drop_chance { 2 } else { 1 };
-    for _ in 0..num_drops {
-        // Weighted random selection
-        let total_weight: u32 = table.iter().map(|e| e.weight).sum();
-        if total_weight == 0 { continue; }
-        let mut roll = rng.gen_range(0..total_weight);
-        let entry = table.iter().find(|e| {
-            roll = roll.saturating_sub(e.weight);
-            roll < e.weight
-        }).unwrap_or(&table[0]);
 
-        // Roll quantity
-        let count = if entry.min == entry.max {
-            entry.min
-        } else {
-            rng.gen_range(entry.min..=entry.max)
-        };
+    // Build all stacks synchronously first (no .await while holding rng),
+    // then drop them. This is required because ThreadRng is !Send and can't
+    // be held across .await points in a Send future.
+    let stacks: Vec<(ItemStack, BlockPos)> = {
+        let mut rng = rand::thread_rng();
+        let mut result = Vec::new();
+        for _ in 0..num_drops {
+            // Weighted random selection
+            let total_weight: u32 = table.iter().map(|e| e.weight).sum();
+            if total_weight == 0 { continue; }
+            let mut roll = rng.gen_range(0..total_weight);
+            let entry = table.iter().find(|e| {
+                roll = roll.saturating_sub(e.weight);
+                roll < e.weight
+            }).unwrap_or(&table[0]);
 
-        // Roll rarity (better for higher-level players)
-        let rarity = roll_rarity_biased_by_level(player_level, allow_mythic);
+            // Roll quantity
+            let count = if entry.min == entry.max {
+                entry.min
+            } else {
+                rng.gen_range(entry.min..=entry.max)
+            };
 
-        // Build the item stack
-        let mut stack = ItemStack::new(count, entry.item);
-        let display_name = format!("{}{} {}",
-            rarity.color_code(),
-            rarity.display_name(),
-            item_display_name(entry.item),
-        );
-        stack.set_custom_name(display_name);
+            // Roll rarity (better for higher-level players)
+            let rarity = roll_rarity_biased_by_level(player_level, allow_mythic);
 
-        // Apply enchantments based on rarity
-        if !entry.enchantments.is_empty() && rarity.enchantment_count() > 0 {
-            let ench_pool = entry.enchantments.to_vec();
-            let ench_count = rarity.enchantment_count().min(ench_pool.len());
-            let chosen: Vec<_> = ench_pool.choose_multiple(&mut rng, ench_count).collect();
-            for &ench in chosen {
-                let level = rng.gen_range(1..=max_enchant_level(ench, rarity));
-                stack.add_enchantment(ench, level as u16);
+            // Build the item stack
+            let mut stack = ItemStack::new(count, entry.item);
+            let display_name = format!("{}{} {}",
+                rarity.color_code(),
+                rarity.display_name(),
+                item_display_name(entry.item),
+            );
+            stack.set_custom_name(display_name);
+
+            // Apply enchantments based on rarity
+            if !entry.enchantments.is_empty() && rarity.enchantment_count() > 0 {
+                let ench_pool = entry.enchantments.to_vec();
+                let ench_count = rarity.enchantment_count().min(ench_pool.len());
+                let chosen: Vec<_> = ench_pool.choose_multiple(&mut rng, ench_count).collect();
+                for &ench in chosen {
+                    let level = rng.gen_range(1..=max_enchant_level(ench, rarity));
+                    stack.add_enchantment(ench, level as u16);
+                }
             }
-        }
 
-        // Drop it
-        let block_pos = BlockPos(Vector3::new(
-            pos.x.floor() as i32,
-            pos.y.floor() as i32,
-            pos.z.floor() as i32,
-        ));
+            // Compute block position
+            let block_pos = BlockPos(Vector3::new(
+                pos.x.floor() as i32,
+                pos.y.floor() as i32,
+                pos.z.floor() as i32,
+            ));
+            result.push((stack, block_pos));
+        }
+        result // rng is dropped here
+    };
+
+    // Now do the async drops
+    for (stack, block_pos) in stacks {
         world.drop_stack(&block_pos, stack).await;
     }
 }
