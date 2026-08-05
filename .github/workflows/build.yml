@@ -7,6 +7,16 @@ on:
       - '**.md'
       - 'LICENSE'
   workflow_dispatch:
+  schedule:
+    # Run daily at 09:00 UTC to catch upstream Pumpkin-MC drift before it bites
+    # a real push. If upstream broke us, this surfaces it immediately.
+    - cron: '0 9 * * *'
+
+# Cancel in-progress runs on the same ref when a new push lands. Prevents
+# queued runs from piling up and wasting minutes on stale commits.
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
@@ -15,9 +25,18 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     env:
       CARGO_INCREMENTAL: 0
       RUST_BACKTRACE: 1
+      # Pin Pumpkin-MC to a known-good commit. The plugin applies patches
+      # against specific module paths in Pumpkin-MC; if upstream changes file
+      # layout, the patches silently no-op in the old script and the build
+      # breaks hours later with confusing errors. Pinning makes this explicit
+      # and gives reproducible builds.
+      # Bump this when upgrading to a newer Pumpkin-MC, AFTER verifying patches
+      # still apply (run scripts/apply-patches.sh locally against the new tip).
+      PUMPKIN_MC_REF: '7c3177b4046fb3fa721e07ad2f8e1787c379f369'
     steps:
       - name: Checkout repo
         uses: actions/checkout@v4
@@ -25,28 +44,66 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Cache cargo registry
+      - name: Cache cargo registry & git
         uses: actions/cache@v4
         continue-on-error: true
         with:
           path: |
             ~/.cargo/registry/
             ~/.cargo/git/
-          key: cargo-reg-${{ runner.os }}
+          # Include the pinned Pumpkin-MC ref in the cache key so that bumping
+          # the pin invalidates the cache and we don't get stale deps.
+          key: cargo-reg-${{ runner.os }}-pumpkin-${{ env.PUMPKIN_MC_REF }}
+          restore-keys: |
+            cargo-reg-${{ runner.os }}-
 
-      - name: Clone Pumpkin-MC
+      - name: Clone Pumpkin-MC (pinned commit, with retry)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          rm -rf pumpkin
-          git clone --depth 1 --recurse-submodules --shallow-submodules https://github.com/Pumpkin-MC/Pumpkin.git pumpkin
+          set -euo pipefail
+          # Clone the pinned commit with submodules. Retries handle transient
+          # GitHub / network failures which previously caused runs #3-#5 to
+          # fail at this step.
+          clone_pumpkin() {
+            rm -rf pumpkin
+            git init -q pumpkin
+            cd pumpkin
+            git remote add origin https://github.com/Pumpkin-MC/Pumpkin.git
+            git fetch --depth 1 origin "$PUMPKIN_MC_REF"
+            git checkout FETCH_HEAD
+            git submodule update --init --depth 1 --recursive
+            cd ..
+          }
+          for attempt in 1 2 3; do
+            echo "[clone] attempt $attempt of 3"
+            if clone_pumpkin; then
+              echo "[clone] success on attempt $attempt"
+              break
+            fi
+            if [ "$attempt" = "3" ]; then
+              echo "[clone] failed after 3 attempts" >&2
+              exit 1
+            fi
+            echo "[clone] retrying in 10s..."
+            sleep 10
+          done
+
           echo "Pumpkin commit: $(cd pumpkin && git rev-parse --short HEAD)"
-          ls pumpkin/Cargo.toml
-          ls pumpkin/pumpkin-plugin-wit/
+          echo "Pumpkin commit (full): $(cd pumpkin && git rev-parse HEAD)"
+          echo
+          echo "Verifying expected files exist:"
+          ls -la pumpkin/Cargo.toml
+          ls -la pumpkin/pumpkin-plugin-wit/
 
       - name: Apply patches
-        run: bash scripts/apply-patches.sh
+        run: |
+          set -euo pipefail
+          bash scripts/apply-patches.sh
 
       - name: Add plugin to workspace
         run: |
+          set -euo pipefail
           cp -r plugin pumpkin/pumpkin-rpg-plugin
           sed -i '/^members = \[/a \  "pumpkin-rpg-plugin",' pumpkin/Cargo.toml
           echo "Workspace members:"
@@ -54,7 +111,9 @@ jobs:
 
       - name: Build
         working-directory: pumpkin
-        run: cargo build --release -p pumpkin -p pumpkin-rpg-plugin 2>&1 | tee ../build.log
+        run: |
+          set -euo pipefail
+          cargo build --release -p pumpkin -p pumpkin-rpg-plugin 2>&1 | tee ../build.log
 
       - name: Upload server binary
         if: success()
@@ -79,3 +138,14 @@ jobs:
           name: build-log
           path: build.log
           retention-days: 7
+
+      - name: Report failure summary
+        if: failure()
+        run: |
+          echo "::error::Build failed. Inspecting build.log for top errors..."
+          echo
+          echo "===== Last 80 lines of build.log ====="
+          tail -n 80 build.log || echo "(no build.log found)"
+          echo
+          echo "===== Error/warning lines (first 50) ====="
+          grep -E '^(error|warning)' build.log 2>/dev/null | head -50 || echo "(no errors/warnings captured)"
