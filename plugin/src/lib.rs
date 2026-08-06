@@ -108,3 +108,4 @@ pub fn plugin() -> Box<dyn Plugin> {
     Box::new(RpgPlugin::new())
 }
 // CI re-trigger
+// retry
