@@ -16,12 +16,12 @@ use std::sync::Arc;
 use pumpkin::plugin::api::events::player::player_interact_entity_event::PlayerInteractEntityEvent;
 use pumpkin::plugin::api::events::player::player_join::PlayerJoinEvent;
 use pumpkin::plugin::api::events::player::player_leave::PlayerLeaveEvent;
-use pumpkin::plugin::api::events::entity::entity_damage::EntityDamageEvent;
 use pumpkin::plugin::api::events::entity::entity_death::EntityDeathEvent;
 use pumpkin::plugin::api::events::server::server_tick_start::ServerTickStartEvent;
-use pumpkin::plugin::{Context, EventHandler, EventPriority};
+use pumpkin::plugin::{Context, EventHandler, EventPriority, Cancellable};
 use pumpkin::server::Server;
 use pumpkin_util::text::TextComponent;
+use pumpkin_data::attributes::Attributes;
 
 use crate::boss;
 use crate::camera::CAMERA_MANAGER;
@@ -29,50 +29,62 @@ use crate::damage::{self, RpgDamageType};
 use crate::player::{self, current_tick, with_state, with_state_mut};
 use crate::ui;
 
-// === Attack tracking ===
+// === Attack handler (blocking) ===
+//
+// Pumpkin has a design issue: if PVP is disabled in the server config, ALL
+// entity attacks are blocked (not just player-vs-player). The code at
+// play.rs:1849 does `if !config.enabled { return; }` before calling
+// player.attack(), so mobs never take damage and EntityDamageEvent never
+// fires.
+//
+// Workaround: register this handler as blocking, directly apply RPG damage
+// to the mob, and cancel the event so the vanilla 'after' block (including
+// the PVP check) never runs. This bypasses the PVP gate entirely.
 
-struct AttackTrackHandler;
-impl EventHandler<PlayerInteractEntityEvent> for AttackTrackHandler {
-    fn handle<'a>(&'a self, _server: &'a Arc<Server>, event: &'a PlayerInteractEntityEvent) -> pumpkin::plugin::BoxFuture<'a, ()> {
+struct AttackHandler;
+impl EventHandler<PlayerInteractEntityEvent> for AttackHandler {
+    fn handle_blocking<'a>(&'a self, server: &'a Arc<Server>, event: &'a mut PlayerInteractEntityEvent) -> pumpkin::plugin::BoxFuture<'a, ()> {
         Box::pin(async move {
             use pumpkin_protocol::java::server::play::ActionType;
             if !matches!(event.action, ActionType::Attack) { return; }
 
+            // Don't process attacks on other players (let vanilla handle PVP)
+            let target = &event.target;
+            let target_entity = target.get_entity();
+            let target_eid = target_entity.entity_id;
+
+            // Skip if target is a player — vanilla handles PVP
+            if target_entity.entity_type == pumpkin_data::entity::EntityType::PLAYER {
+                return;
+            }
+
             let player = &event.player;
             let player_uuid = player.gameprofile.id;
             let attacker_eid = player.entity_id();
-            let target_eid = event.target.get_entity().entity_id;
             let tick = current_tick();
 
+            // Record the attack for death/XP attribution
             damage::record_attack(target_eid, player_uuid, attacker_eid, tick);
-        })
-    }
-}
 
-// === Damage modification ===
+            // Check if RPG is enabled for this player
+            let rpg_enabled = with_state(player_uuid, |s| s.is_enabled());
+            if !rpg_enabled {
+                // RPG disabled — let vanilla handle the attack (don't cancel)
+                return;
+            }
 
-struct DamageModHandler;
-impl EventHandler<EntityDamageEvent> for DamageModHandler {
-    fn handle_blocking<'a>(&'a self, server: &'a Arc<Server>, event: &'a mut EntityDamageEvent) -> pumpkin::plugin::BoxFuture<'a, ()> {
-        Box::pin(async move {
-            let tick = current_tick();
-            let target_eid = event.entity_id;
-
-            // Look up the attacker from our registry
-            let Some(attack) = damage::lookup_attacker(target_eid, tick) else { return; };
-            let attacker_uuid = attack.attacker_player_uuid;
-
-            // Get the player's state (or skip if RPG disabled)
-            let rpg_enabled = with_state(attacker_uuid, |s| s.is_enabled());
-            if !rpg_enabled { return; }
-
-            // Get the player's class and combo
-            let (class, combo, pending_skill_id) = with_state(attacker_uuid, |s| {
-                (s.get_class(), s.get_combo(), s.pending_skill_id.load(std::sync::atomic::Ordering::Relaxed))
+            // Get player state
+            let (class, combo, pending_skill_id, level) = with_state(player_uuid, |s| {
+                (s.get_class(), s.get_combo(), s.pending_skill_id.load(std::sync::atomic::Ordering::Relaxed), s.get_level())
             });
 
             // Increment combo
-            with_state_mut(attacker_uuid, |s| s.increment_combo(tick));
+            with_state_mut(player_uuid, |s| s.increment_combo(tick));
+
+            // Compute base damage from player's attack attribute
+            let base_damage = player.living_entity.get_attribute_value(&Attributes::ATTACK_DAMAGE) as f32;
+            // If base damage is 0 (fist with no attribute), use a minimum of 1.0
+            let base_damage = base_damage.max(1.0);
 
             // Compute multipliers
             let class_dmg_mult = class.passive_stats().2;
@@ -81,31 +93,29 @@ impl EventHandler<EntityDamageEvent> for DamageModHandler {
             // Skill multiplier + effect application
             let mut skill_mult: f32 = 1.0;
             let mut crit_mult: f32 = 1.0;
-            let mut elemental_mult: f32 = 1.0;
             let mut damage_type = class.basic_damage_type();
 
             if pending_skill_id >= 0 {
                 if let Some(skill) = crate::class::SkillDef::by_id(pending_skill_id as usize) {
-                    // Apply skill effects
                     match skill.id {
                         0 => { // Shield Bash (Vanguard)
                             skill_mult = 1.5;
                             damage::with_mob_status_mut(target_eid, |s| {
-                                s.stunned_until_tick = tick + 40; // 2s stun
+                                s.stunned_until_tick = tick + 40;
                             });
                         }
                         2 => { // Flame Strike (Spellblade)
                             skill_mult = 2.0;
                             damage_type = RpgDamageType::Fire;
                             damage::with_mob_status_mut(target_eid, |s| {
-                                s.ignited_until_tick = tick + 80; // 4s burn
+                                s.ignited_until_tick = tick + 80;
                                 s.ignited_damage_per_tick = 1.0;
                             });
                         }
-                        4 => { // Shadowstep crit (Trickster) — should already be applied
+                        4 => { // Shadowstep crit (Trickster)
                             crit_mult = 2.5;
                         }
-                        5 => { // Fan of Knives (Trickster) — cone AoE
+                        5 => { // Fan of Knives (Trickster)
                             skill_mult = 1.2;
                         }
                         6 => { // Fireball (Evoker)
@@ -118,21 +128,19 @@ impl EventHandler<EntityDamageEvent> for DamageModHandler {
                     }
 
                     // Consume the pending skill
-                    with_state_mut(attacker_uuid, |s| {
+                    with_state_mut(player_uuid, |s| {
                         s.pending_skill_id.store(-1, std::sync::atomic::Ordering::Relaxed);
                     });
 
                     // Notify the player
-                    if let Some(player) = server.get_player_by_uuid(attacker_uuid) {
-                        let msg = format!("\u{00a7}b{} triggered! +{:.0}% damage\u{00a7}r",
-                            skill.name, (skill_mult - 1.0) * 100.0);
-                        ui::show_combat_feedback(&player, msg).await;
-                    }
+                    let msg = format!("\u{00a7}b{} triggered! +{:.0}% damage\u{00a7}r",
+                        skill.name, (skill_mult - 1.0) * 100.0);
+                    ui::show_combat_feedback(player, msg).await;
                 }
             }
 
             // Check for Shadowstep crit window
-            let shadowstep_until = with_state(attacker_uuid, |s| {
+            let shadowstep_until = with_state(player_uuid, |s| {
                 s.shadowstep_until_tick.load(std::sync::atomic::Ordering::Relaxed)
             });
             if tick < shadowstep_until {
@@ -144,42 +152,51 @@ impl EventHandler<EntityDamageEvent> for DamageModHandler {
                 (s.is_frozen(tick), s.is_marked(tick))
             });
 
-            // Apply the modified damage
-            let original = event.damage;
+            // Compute final damage
             let final_dmg = damage::compute_final_damage(
-                original,
+                base_damage,
                 class_dmg_mult,
                 combo_mult,
                 skill_mult,
-                elemental_mult,
+                1.0, // elemental_mult (not used yet)
                 frozen,
                 marked,
                 crit_mult,
             );
-            event.damage = final_dmg;
+
+            // Apply damage directly to the mob's health
+            if let Some(living) = target.get_living_entity() {
+                let current_hp = living.health.load();
+                let new_hp = (current_hp - final_dmg).max(0.0);
+                living.set_health(new_hp);
+
+                // If HP reached 0, the mob will die naturally via Pumpkin's
+                // death check on the next tick. EntityDeathEvent will fire.
+            }
 
             // Show damage feedback to attacker
-            if let Some(player) = server.get_player_by_uuid(attacker_uuid) {
-                let combo_new = combo + 1;
-                let msg = format!(
-                    "\u{00a7}e{}{} \u{00a7}7-> \u{00a7}c{:.1} dmg\u{00a7}r \u{00a7}7(combo {}x, {:.1}x mult)\u{00a7}r",
-                    damage_type.color_code(),
-                    damage_type.display_name(),
-                    final_dmg,
-                    combo_new,
-                    damage::combo_multiplier(combo_new),
-                );
-                ui::show_combat_feedback(&player, msg).await;
-            }
+            let combo_new = combo + 1;
+            let msg = format!(
+                "\u{00a7}e{}{} \u{00a7}7-> \u{00a7}c{:.1} dmg\u{00a7}r \u{00a7}7(combo {}x, {:.1}x mult)\u{00a7}r",
+                damage_type.color_code(),
+                damage_type.display_name(),
+                final_dmg,
+                combo_new,
+                damage::combo_multiplier(combo_new),
+            );
+            ui::show_combat_feedback(player, msg).await;
 
-            // If this is a boss, update its HP bar
-            if boss::is_boss(target_eid) {
-                // We need the boss's current HP. The damage event already has
-                // the damage; we'd need to look up the entity to get its HP.
-                // For now, just trigger a boss bar update — the actual HP
-                // read happens in the tick handler.
-                // (Boss HP bar updates happen in the tick loop.)
-            }
+            // Play attack sound + particles at target position
+            let target_pos = target_entity.pos.load();
+            use pumpkin_data::sound::{Sound, SoundCategory};
+            use pumpkin_data::particle::Particle;
+            player.world().play_sound(Sound::EntityPlayerAttackStrong, SoundCategory::Players, &target_pos);
+            player.world().spawn_particle(target_pos, pumpkin_util::math::vector3::Vector3::new(0.5, 0.5, 0.5), 0.2, 5, Particle::DamageIndicator);
+
+            // Cancel the event so vanilla's 'after' block (with the PVP check)
+            // doesn't run. This prevents double damage and bypasses the PVP
+            // gate that would otherwise block all attacks.
+            event.set_cancelled(true);
         })
     }
 }
@@ -356,9 +373,6 @@ impl EventHandler<PlayerLeaveEvent> for LeaveHandler {
 
 pub async fn register_all(ctx: &Context) -> Result<(), String> {
     // Read-only handlers: blocking=false, use `handle`
-    ctx.register_event::<PlayerInteractEntityEvent, _>(
-        Arc::new(AttackTrackHandler), EventPriority::Normal, false,
-    ).await;
     ctx.register_event::<PlayerJoinEvent, _>(
         Arc::new(JoinHandler), EventPriority::Normal, false,
     ).await;
@@ -370,13 +384,16 @@ pub async fn register_all(ctx: &Context) -> Result<(), String> {
     ).await;
 
     // Mutating handlers: blocking=true, use `handle_blocking`
-    ctx.register_event::<EntityDamageEvent, _>(
-        Arc::new(DamageModHandler), EventPriority::Normal, true,
+    // AttackHandler is blocking because it cancels the event (to bypass
+    // Pumpkin's PVP gate that blocks all entity attacks when PVP is off)
+    // and directly applies damage to the mob.
+    ctx.register_event::<PlayerInteractEntityEvent, _>(
+        Arc::new(AttackHandler), EventPriority::Normal, true,
     ).await;
     ctx.register_event::<EntityDeathEvent, _>(
         Arc::new(EntityDeathHandler), EventPriority::Normal, true,
     ).await;
 
-    ctx.log("Event handlers registered: AttackTrack, DamageMod, EntityDeath, Tick, Join, Leave");
+    ctx.log("Event handlers registered: Attack, EntityDeath, Tick, Join, Leave");
     Ok(())
 }
