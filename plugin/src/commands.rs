@@ -512,14 +512,58 @@ fn build_rpg_tree() -> CommandTree {
 
 // === Registration ===
 
+use pumpkin_util::permission::{Permission, PermissionDefault, PermissionLvl};
+
+/// Register a permission node with the given default, then register the
+/// command tree under that same node. The node is namespaced automatically
+/// by the plugin name (e.g. "class.use" -> "pumpkin-rpg-plugin:class.use").
+async fn register_cmd(
+    ctx: &Context,
+    tree: CommandTree,
+    perm_node: &str,
+    default: PermissionDefault,
+    description: &str,
+) {
+    // Build the full node name. register_permission requires it to start
+    // with the plugin's namespace.
+    let full_node = format!("pumpkin-rpg-plugin:{perm_node}");
+
+    // Register the permission with a default so non-OP players (or OPs,
+    // depending on `default`) can actually use the command. Without this,
+    // the permission check falls through to "not found" = denied.
+    if let Err(e) = ctx.register_permission(Permission {
+        node: full_node.clone(),
+        description: description.to_string(),
+        default,
+        children: std::collections::HashMap::new(),
+    }).await {
+        ctx.log(format!("Warning: could not register permission {full_node}: {e}"));
+    }
+
+    // Register the command tree under the same permission node.
+    // register_command will namespace it to "pumpkin-rpg-plugin:<perm_node>".
+    ctx.register_command(tree, perm_node).await;
+}
+
 pub async fn register_all(ctx: &Context) -> Result<(), String> {
-    ctx.register_command(build_class_tree(), "0").await;
-    ctx.register_command(build_stats_tree(), "0").await;
-    ctx.register_command(build_skills_tree(), "0").await;
-    ctx.register_command(build_skill_tree(), "0").await;
-    ctx.register_command(build_camera_tree(), "0").await;
-    ctx.register_command(build_summon_tree(), "0").await;  // TODO: admin permission
-    ctx.register_command(build_rpg_tree(), "0").await;
+    // Player commands — everyone can use these.
+    register_cmd(ctx, build_class_tree(), "class.use",
+        PermissionDefault::Allow, "Pick or view your RPG class").await;
+    register_cmd(ctx, build_stats_tree(), "stats.use",
+        PermissionDefault::Allow, "View your RPG stats").await;
+    register_cmd(ctx, build_skills_tree(), "skills.use",
+        PermissionDefault::Allow, "List your class skills").await;
+    register_cmd(ctx, build_skill_tree(), "skill.use",
+        PermissionDefault::Allow, "Activate a skill").await;
+    register_cmd(ctx, build_camera_tree(), "camera.use",
+        PermissionDefault::Allow, "Switch camera mode").await;
+    register_cmd(ctx, build_rpg_tree(), "rpg.use",
+        PermissionDefault::Allow, "RPG system controls").await;
+
+    // Admin command — only OPs (level 2+) can summon bosses.
+    register_cmd(ctx, build_summon_tree(), "summonboss.use",
+        PermissionDefault::Op(PermissionLvl::Two), "Summon an RPG boss").await;
+
     ctx.log("Commands registered: /class, /stats, /skills, /skill, /camera, /summonboss, /rpg");
     Ok(())
 }
