@@ -107,3 +107,4 @@ pub static PUMPKIN_API_VERSION: u32 = pumpkin::plugin::PLUGIN_API_VERSION;
 pub fn plugin() -> Box<dyn Plugin> {
     Box::new(RpgPlugin::new())
 }
+// CI re-trigger
