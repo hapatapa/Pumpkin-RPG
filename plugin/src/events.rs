@@ -54,7 +54,7 @@ impl EventHandler<PlayerInteractEntityEvent> for AttackHandler {
             let target_eid = target_entity.entity_id;
 
             // Skip if target is a player — vanilla handles PVP
-            if target_entity.entity_type == pumpkin_data::entity::EntityType::PLAYER {
+            if target_entity.entity_type == &pumpkin_data::entity::EntityType::PLAYER {
                 return;
             }
 
