@@ -104,6 +104,7 @@ impl Clone for CameraState {
         }
     }
 }
+impl Copy for CameraState {}
 
 pub struct CameraManager {
     cameras: Mutex<HashMap<i32, CameraState>>,
