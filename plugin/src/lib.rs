@@ -109,3 +109,4 @@ pub fn plugin() -> Box<dyn Plugin> {
 }
 // CI re-trigger
 // retry
+// GitHub Actions back online — re-trigger build
